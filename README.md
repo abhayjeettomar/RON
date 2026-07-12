@@ -2,7 +2,7 @@
 
 ##### 
 
-##### An offline, privacy-first AI desktop assistant powered by Llama 3 and Ollama. 
+##### An offline, privacy-first AI desktop assistant powered by Llama 3 and Ollama.
 
 ##### 
 
@@ -76,7 +76,7 @@
 
 ##### \* \*\*Python:\*\* Version 3.10 or higher
 
-##### \* \*\*LLM Engine:\*\* Ollama installed locally with the llama3 model pulled.
+##### \* \*\*LLM Engine:\*\* Ollama installed locally with the llama3 model pulled.(https://ollama.com)
 
 ##### 
 
