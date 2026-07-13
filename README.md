@@ -1,4 +1,4 @@
-# \# 🤖 RON (Robotic Online Network)
+# \# 🤖 RON
 
 ##### 
 
