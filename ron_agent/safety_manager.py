@@ -2,8 +2,16 @@ import json
 import os
 
 class SafetyManager:
-    def __init__(self, config_path: str = "ron_config.json"):
-        self.config_path = config_path
+    def __init__(self, config_path: str = None):
+        if config_path is None:
+            appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+            ron_dir = os.path.join(appdata, "RON")
+            if not os.path.exists(ron_dir):
+                os.makedirs(ron_dir)
+            self.config_path = os.path.join(ron_dir, "ron_config.json")
+        else:
+            self.config_path = config_path
+            
         self.safe_mode = True
         self.load_settings()
 

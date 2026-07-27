@@ -3,4 +3,7 @@ ron_config.json
 ron_agent/sessions/
 __pycache__/
 *.pyc
+build/
+dist/
+*.spec
 RON.lnk
