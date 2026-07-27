@@ -2,7 +2,7 @@
 
 
 
-#### An advanced, hybrid AI desktop assistant built for speed, privacy, and seamless voice control. 
+#### An advanced, hybrid AI desktop assistant built for speed, privacy, and seamless voice control.
 
 #### RON is designed to provide powerful desktop automation, context-aware intent parsing, and intelligent assistance entirely on your local machine—with an optional Cloud Performance Mode for lightning-fast responses.
 
@@ -109,4 +109,14 @@
 ## 📜 License
 
 #### This project is licensed under the GPL-3.0 License - see the LICENSE file for details.
+
+
+
+
+
+
+
+###### ***\*\*\*RON IS STILL UNDER-DEVELOPMENT HE MAY HAVE BUGS, IF YOU FIND ANY BUGS PLEASE REPORT THEM\*\*\****
+
+
 
