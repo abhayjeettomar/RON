@@ -1,114 +1,112 @@
-# \# 🤖 RON
+## \# 🤖 RON
 
-##### 
 
-##### An offline, privacy-first AI desktop assistant powered by Llama 3 and Ollama.
 
-##### 
+#### An advanced, hybrid AI desktop assistant built for speed, privacy, and seamless voice control. 
 
-##### RON is built to provide powerful desktop automation, intent parsing, and intelligent assistance entirely on your local machine—meaning your data, system info, and conversations never leave your computer.
+#### RON is designed to provide powerful desktop automation, context-aware intent parsing, and intelligent assistance entirely on your local machine—with an optional Cloud Performance Mode for lightning-fast responses.
 
-##### 
+#### \---
 
-##### \---
+## \## 🌟 Key Features
 
-##### 
 
-### \## 🌟 Key Features
 
-##### 
+#### \* \*\*Hybrid AI Engine (Local \& Cloud):\*\* Run RON 100% locally using Llama 3 (via Ollama) for total privacy, or switch to Cloud Performance Mode (via Gemini API) for instantaneous 1-second execution.
 
-##### \* \*\*100% Offline \& Private:\*\* Powered locally by Ollama and Llama 3. No cloud API keys, no data tracking, and total privacy.
 
-##### \* \*\*Intent Parsing:\*\* High-accuracy natural language processing to understand exactly what desktop actions you want to perform.
 
-##### \* \*\*Desktop Automation:\*\* Handles local tasks, system shortcuts, and routine workflows autonomously.
+#### \* \*\*Lightning-Fast Voice Chat:\*\* Features a highly optimized, lag-free voice mode. Built with Dynamic Voice Activity Detection (VAD) that filters out background laptop fan noise, and native Windows SAPI for crash-proof, instant Text-To-Speech.
 
-##### \* \*\*Safety First:\*\* Built-in local safety manager to protect system integrity during execution.
 
-##### \* \*\*Custom UI \& Avatar:\*\* Features a dedicated desktop interface with visual avatar branding assets.
 
-##### 
+#### \* \*\*Continuous Follow-Up:\*\* Talk to RON naturally. After his first reply, RON's microphone stays open for seamless follow-up commands—no need to repeat wake words.
 
-##### \---
 
-##### 
 
-### \## 🏗️ Project Architecture
+#### \* \*\*Advanced Intent Parsing:\*\* High-accuracy natural language processing that understands complex automation chaining (e.g., \*"open notepad, write a poem, and close it after 10 seconds"\*). Includes intelligent pronoun resolution so RON remembers what "it" refers to.
 
-##### 
 
-##### The repository is structured for clean modular execution:
 
-##### 
+#### \* \*\*Desktop Automation:\*\* Autonomously handles local tasks, system shortcuts, simulated typing, and app management completely silently in the background.
 
-##### ├── ron\_agent/
 
-##### │   ├── automation.py       # Local execution and desktop automation scripts
 
-##### │   ├── intent\_parser.py    # Natural language processing and intent analysis
+#### \* \*\*Safety First:\*\* Built-in local safety manager and sandbox to protect system integrity during execution.
 
-##### │   ├── ron\_engine.py       # Core LLM orchestrator connecting to Ollama
+#### \---
 
-##### │   ├── ron\_ui.py           # Desktop user interface layer
+## \## 🏗️ Project Architecture
 
-##### │   └── safety\_manager.py   # Local runtime safety checks and guardrails
 
-##### ├── ron\_config.json         # Layout and application configurations
 
-##### ├── run\_ron.bat             # Quick-launch Windows batch script
+#### The repository is structured for clean modular execution:
 
-##### └── validate\_ron.py         # System verification and dependency checker
+#### ```text
 
-##### 
+#### ├── ron\_agent/
 
-##### \---
+#### │   ├── automation.py       # Local execution, keystroke simulation, and desktop automation
 
-##### 
+#### │   ├── intent\_parser.py    # Natural language processing, regex chaining, and LLM routing
 
-### \## 🚀 Getting Started
+#### │   ├── ron\_engine.py       # Core orchestrator managing UI, memory, and task dispatching
 
-##### 
+#### │   ├── ron\_ui.py           # Custom desktop user interface layer
 
-#### \### Prerequisites
+#### │   ├── safety\_manager.py   # Local runtime safety checks and guardrails
 
-##### \* \*\*OS:\*\* Windows 10/11
+#### │   └── voice\_manager.py    # VAD, STT, and native Windows SAPI Text-to-Speech handling
 
-##### \* \*\*Python:\*\* Version 3.10 or higher
+#### ├── ron\_config.json         # Global application configurations
 
-##### \* \*\*LLM Engine:\*\* Ollama installed locally with the llama3 model pulled.(https://ollama.com)
+#### ├── run\_ron.bat             # Quick-launch Windows batch script
 
-##### 
+#### └── validate\_ron.py         # System verification and dependency checker
 
-#### \### Installation \& Launch
+#### \---
 
-##### 1\. Clone this repository to your local machine.
+## 🚀 Getting Started
 
-##### 2\. Ensure Ollama is running in the background by executing: ollama run llama3
 
-##### 4\. Double-click run\_ron.bat or execute the main UI wrapper to launch the desktop assistant!
 
-##### 
+### Prerequisites
 
-##### \---
 
-##### 
 
-### \## 🛠️ Tech Stack
+#### OS: Windows 10/11
 
-##### \* \*\*Language:\*\* Python
+#### Python: Version 3.10 or higher
 
-##### \* \*\*LLM:\*\* Meta Llama 3 (via Ollama)
+#### Local LLM Engine: Ollama installed locally with the llama3 model pulled (https://ollama.com).
 
-##### \* \*\*GUI Framework:\*\* Tkinter / Custom Python UI components
+#### Installation \& Launch
 
-##### 
+#### Clone this repository to your local machine.
 
-##### \---
+#### (Optional but Recommended) For lightning-fast Cloud Performance Mode, create a file named gemini\_api\_key.txt in the main folder and paste your free Google Gemini API key inside it.
 
-##### 
+#### Ensure Ollama is running in the background by executing: ollama run llama3
 
-### \## 📜 License
+#### Double-click run\_ron.bat or execute the main UI wrapper to launch the desktop assistant!
 
-##### This project is licensed under the GPL-3.0 License - see the LICENSE file for details.
+
+
+## 🛠️ Tech Stack
+
+
+
+#### Language: Python
+
+#### LLM: Meta Llama 3 (via Ollama) \& Google Gemini API (Hybrid)
+
+#### Voice Engine: Google STT \& Windows Native SAPI (win32com)
+
+#### GUI Framework: Custom Tkinter UI components
+
+
+
+## 📜 License
+
+#### This project is licensed under the GPL-3.0 License - see the LICENSE file for details.
 
