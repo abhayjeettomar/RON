@@ -1,8 +1,7 @@
 import os
 import sys
-import json
-import uuid
 import tkinter as tk
+# pyrefly: ignore [missing-import]
 import customtkinter as ctk
 from typing import Callable
 import datetime
@@ -10,6 +9,7 @@ import datetime
 # Import local packages
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ron_agent.ron_engine import RonEngine
+from ron_agent.voice_manager import VoiceManager
 
 # Setup theme and design system
 ctk.set_appearance_mode("dark")
@@ -35,10 +35,6 @@ TEXT_DIM      = "#475569"
 USER_BUBBLE   = "#4338CA"
 RON_BUBBLE    = "#1E293B"
 CONSOLE_BG    = "#030712"
-
-# ── Sessions Directory ─────────────────────────────────────────────
-SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
-os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 
 class RonApp(ctk.CTk):
@@ -67,23 +63,29 @@ class RonApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # ── State ─────────────────────────────────────────────────
-        self.chat_history = []
-        self.is_loading_history = True
+        self.chat_history = []          # In-memory only — for Ollama conversational context
+        self.is_loading_history = False
         self.pending_reply_callback = None
         self.chat_messages_count = 0
         self.thinking_label = None
         self.thinking_dots = 0
         self.thinking_timer = None
-        
-        # Session management
-        self.current_session_id = None
-        self.sessions_index = []  # [{id, title, timestamp}, ...]
-        self._load_sessions_index()
+        self.chat_history = []
+        self.chat_messages_count = 0
+        self.is_loading_history = False
+        self.is_voice_mode = False
         
         # Load avatar images
         self._load_avatars()
         
-        # ── Engine ────────────────────────────────────────────────
+        # Voice integration
+        self.voice_manager = None
+        try:
+            self.voice_manager = VoiceManager()
+        except Exception as e:
+            print(f"Voice init error: {e}")
+        
+        # ── Initialize Engine ────────────────────────────────────────────────
         self.engine = RonEngine(
             ui_log_callback=self.log_to_console,
             ui_status_callback=self.update_status,
@@ -99,27 +101,31 @@ class RonApp(ctk.CTk):
         self._build_sidebar()
         self._build_chat_panel()
         
-        # Start a new session or load the latest one
-        if self.sessions_index:
-            self._load_session(self.sessions_index[0]["id"])
-        else:
-            self._new_session(show_welcome=True)
+        # Always start fresh
+        self._new_session(show_welcome=True)
+        
+        # Show mode selection overlay on every startup
+        self.after(100, self._show_mode_selection_screen)
 
     # ── Helpers ────────────────────────────────────────────────────
 
     def _load_window_icon(self):
-        """Load custom window/taskbar icon from ron_avatar.png (brain logo)."""
+        """Load custom window/taskbar icon from ron_avatar.ico/png (brain logo)."""
         try:
-            from PIL import Image, ImageTk
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_avatar.png")
-            if not os.path.exists(icon_path):
-                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_logo.png")
-            if os.path.exists(icon_path):
-                img = Image.open(icon_path).resize((32, 32), Image.Resampling.LANCZOS)
-                self.icon_photo = ImageTk.PhotoImage(img)
-                self.wm_iconphoto(False, self.icon_photo)
-        except Exception:
-            pass
+            icon_ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_avatar.ico")
+            if os.path.exists(icon_ico_path) and sys.platform == "win32":
+                self.iconbitmap(icon_ico_path)
+            else:
+                from PIL import Image, ImageTk
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_avatar.png")
+                if not os.path.exists(icon_path):
+                    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_logo.png")
+                if os.path.exists(icon_path):
+                    img = Image.open(icon_path).resize((32, 32), Image.Resampling.LANCZOS)
+                    self.icon_photo = ImageTk.PhotoImage(img)
+                    self.wm_iconphoto(False, self.icon_photo)
+        except Exception as e:
+            print(f"Failed to load icon: {e}")
 
     def _load_avatars(self):
         """Load Ron avatar image for chat bubbles."""
@@ -144,71 +150,107 @@ class RonApp(ctk.CTk):
     def get_timestamp(self) -> str:
         return datetime.datetime.now().strftime("%H:%M")
 
-    # ── Session Management ────────────────────────────────────────
+    # ── Mode Selection ───────────────────────────────────────────────
 
-    def _sessions_index_path(self) -> str:
-        return os.path.join(SESSIONS_DIR, "_index.json")
-
-    def _session_file_path(self, session_id: str) -> str:
-        return os.path.join(SESSIONS_DIR, f"{session_id}.json")
-
-    def _load_sessions_index(self):
-        """Load the sessions index from disk."""
-        path = self._sessions_index_path()
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    self.sessions_index = json.load(f)
-            except Exception:
-                self.sessions_index = []
+    def _show_mode_selection_screen(self):
+        """Displays a full-screen overlay to select Offline or Online mode."""
+        self.mode_overlay = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self.mode_overlay.place(relwidth=1.0, relheight=1.0)
+        
+        container = ctk.CTkFrame(self.mode_overlay, fg_color="transparent")
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        
+        ctk.CTkLabel(container, text="Welcome to RON", font=ctk.CTkFont(family="Segoe UI", size=32, weight="bold"), text_color=TEXT_PRIMARY).pack(pady=(0, 10))
+        ctk.CTkLabel(container, text="Please select your preferred operating mode:", font=ctk.CTkFont(family="Segoe UI", size=16), text_color=TEXT_SECONDARY).pack(pady=(0, 30))
+        
+        # Offline Button
+        offline_btn = ctk.CTkButton(
+            container, text="🔒 Local Privacy Mode\n\nRuns entirely on your hardware\nMaximized privacy & zero data sharing",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            fg_color=BG_CARD, hover_color=BORDER_DIM, text_color=TEXT_PRIMARY,
+            border_width=2, border_color=TEXT_DIM,
+            width=300, height=120, command=self._on_offline_selected
+        )
+        offline_btn.pack(side="left", padx=20)
+        
+        # Online Button
+        online_btn = ctk.CTkButton(
+            container, text="⚡ Cloud Performance Mode\n\nPowered by Google Gemini\nLightning-fast conversational speed",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+            width=300, height=120, command=self._on_online_selected
+        )
+        online_btn.pack(side="left", padx=20)
+        
+    def _on_offline_selected(self):
+        os.environ["RON_APP_MODE"] = "offline"
+        self.mode_overlay.destroy()
+        
+        # Disable Voice Chat in Offline mode since Google STT uses the cloud
+        if hasattr(self, 'voice_btn'):
+            self.voice_btn.configure(state="disabled", fg_color=BG_CARD, text_color=TEXT_DIM)
+            if hasattr(self, 'voice_tooltip'):
+                self.voice_tooltip.grid(row=3, column=0, pady=(0, 4))
+                
+        # Hide continuous follow-up toggle since voice is disabled
+        if hasattr(self, 'continuous_listening_switch'):
+            self.continuous_listening_switch.grid_forget()
+            
+    def _on_online_selected(self):
+        key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gemini_api_key.txt")
+        if os.path.exists(key_path) and os.path.getsize(key_path) > 0:
+            os.environ["RON_APP_MODE"] = "online"
+            self.mode_overlay.destroy()
+            
+            # Enable voice features
+            if hasattr(self, 'voice_btn'):
+                self.voice_btn.configure(state="normal", fg_color="#059669", text_color="#FFFFFF")
+                if hasattr(self, 'voice_tooltip'):
+                    self.voice_tooltip.grid_forget()
+            if hasattr(self, 'continuous_listening_switch'):
+                self.continuous_listening_switch.grid(row=4, column=0, sticky="w", padx=20, pady=(4, 4))
         else:
-            self.sessions_index = []
-            # Migrate old chat_history.json if it exists
-            old_history = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_history.json")
-            if os.path.exists(old_history):
-                try:
-                    with open(old_history, "r", encoding="utf-8") as f:
-                        old_msgs = json.load(f)
-                    if old_msgs:
-                        sid = str(uuid.uuid4())[:8]
-                        first_msg = old_msgs[0].get("content", "Chat")[:40] if old_msgs else "Chat"
-                        session_data = {"messages": old_msgs}
-                        with open(self._session_file_path(sid), "w", encoding="utf-8") as f:
-                            json.dump(session_data, f, indent=2, ensure_ascii=False)
-                        self.sessions_index.insert(0, {
-                            "id": sid,
-                            "title": first_msg,
-                            "timestamp": datetime.datetime.now().isoformat()
-                        })
-                        self._save_sessions_index()
-                except Exception:
-                    pass
+            self._show_api_key_input()
+            
+    def _show_api_key_input(self):
+        # Clear the container
+        for widget in self.mode_overlay.winfo_children():
+            widget.destroy()
+            
+        container = ctk.CTkFrame(self.mode_overlay, fg_color="transparent")
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        
+        ctk.CTkLabel(container, text="Gemini API Key Required", font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"), text_color=TEXT_PRIMARY).pack(pady=(0, 10))
+        instructions = (
+            "To unlock lightning-fast Cloud Performance Mode, you need a free Gemini API Key.\n\n"
+            "1. Go to https://aistudio.google.com/app/apikey\n"
+            "2. Click 'Create API Key'\n"
+            "3. Paste the key below:"
+        )
+        ctk.CTkLabel(container, text=instructions, 
+                     font=ctk.CTkFont(family="Segoe UI", size=14), text_color=TEXT_SECONDARY).pack(pady=(0, 20))
+                     
+        key_entry = ctk.CTkEntry(container, width=400, height=40, font=ctk.CTkFont(size=14), placeholder_text="Enter API Key here...")
+        key_entry.pack(pady=(0, 20))
+        
+        def save_key():
+            val = key_entry.get().strip()
+            if val:
+                key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gemini_api_key.txt")
+                with open(key_path, "w", encoding="utf-8") as f:
+                    f.write(val)
+                os.environ["RON_APP_MODE"] = "online"
+                self.mode_overlay.destroy()
+                if hasattr(self, 'voice_btn'):
+                    self.voice_btn.configure(state="normal", fg_color="#059669", text_color="#FFFFFF")
+                    
+        ctk.CTkButton(container, text="Save & Continue", command=save_key, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=200, height=40, font=ctk.CTkFont(weight="bold")).pack()
+        ctk.CTkButton(container, text="Cancel (Use Offline)", command=self._on_offline_selected, fg_color="transparent", hover_color=BG_CARD, text_color=TEXT_SECONDARY, width=200, height=40).pack(pady=(10, 0))
 
-    def _save_sessions_index(self):
-        try:
-            with open(self._sessions_index_path(), "w", encoding="utf-8") as f:
-                json.dump(self.sessions_index, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
-
-    def _save_current_session(self):
-        """Save current chat history to the session file."""
-        if not self.current_session_id or not self.chat_history:
-            return
-        try:
-            data = {"messages": self.chat_history}
-            with open(self._session_file_path(self.current_session_id), "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+    # ── Session Management (in-memory only) ───────────────────────
 
     def _new_session(self, show_welcome=True):
-        """Create a new chat session."""
-        # Save current session first
-        self._save_current_session()
-        
-        sid = str(uuid.uuid4())[:8]
-        self.current_session_id = sid
+        """Start a fresh chat — clears in-memory history and chat display."""
         self.chat_history = []
         self.chat_messages_count = 0
         
@@ -217,89 +259,27 @@ class RonApp(ctk.CTk):
         
         if show_welcome:
             self.is_loading_history = True
+            mode_text = "🔒 Local Privacy Mode" if os.environ.get("RON_APP_MODE") == "offline" else "⚡ Cloud Performance Mode"
+            
             self.display_message("Ron",
-                "Hey there! 👋 I'm Ron, your local AI desktop assistant.\n\n"
-                "I run completely offline on your machine. Here's what I can do:\n\n"
+                f"Hey there! 👋 I'm Ron, your AI desktop assistant.\n\n"
+                f"You are currently running in **{mode_text}**.\n\n"
+                "🛡️ **Safe Mode** is enabled by default at the bottom left. This acts as a security checkpoint, meaning I will always ask for your permission before executing system commands or modifying files, keeping you in full control!\n\n"
+                "Here is what I can do:\n"
                 "🚀  Open & close apps\n"
                 "🌐  Browse the web\n"
                 "⌨️  Type & automate\n"
-                "📸  Screenshots\n"
-                "🔊  Volume control\n"
+                "📸  Take screenshots\n"
                 "💻  Run commands\n\n"
-                "Try: \"open notepad and type hello world\"")
+                "Try asking me: \"open notepad and type hello world\"")
             self.is_loading_history = False
-        
-        # Session gets added to index on first user message (so empty sessions aren't saved)
-
-    def _load_session(self, session_id: str):
-        """Load a specific session by ID."""
-        self._save_current_session()
-        
-        path = self._session_file_path(session_id)
-        if not os.path.exists(path):
-            self._new_session()
-            return
-        
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.current_session_id = session_id
-            self.chat_history = data.get("messages", [])
-            self.chat_messages_count = 0
-            
-            self._clear_chat_frame()
-            
-            self.is_loading_history = True
-            for msg in self.chat_history:
-                sender = "You" if msg.get("role") == "user" else "Ron"
-                self.display_message(sender, msg.get("content", ""))
-            self.is_loading_history = False
-            
-            # Update sidebar highlight
-            self._refresh_session_list()
-        except Exception:
-            self._new_session()
-
-    def _delete_session(self, session_id: str):
-        """Delete a session from index and disk."""
-        self.sessions_index = [s for s in self.sessions_index if s["id"] != session_id]
-        self._save_sessions_index()
-        try:
-            path = self._session_file_path(session_id)
-            if os.path.exists(path):
-                os.remove(path)
-        except Exception:
-            pass
-        if session_id == self.current_session_id:
-            if self.sessions_index:
-                self._load_session(self.sessions_index[0]["id"])
-            else:
-                self._new_session()
-        else:
-            self._refresh_session_list()
-
-    def _ensure_session_in_index(self, first_message: str):
-        """Add current session to index if it isn't already there."""
-        for s in self.sessions_index:
-            if s["id"] == self.current_session_id:
-                return
-        title = first_message[:40].strip()
-        if not title:
-            title = "New Chat"
-        self.sessions_index.insert(0, {
-            "id": self.current_session_id,
-            "title": title,
-            "timestamp": datetime.datetime.now().isoformat()
-        })
-        self._save_sessions_index()
-        self._refresh_session_list()
 
     # ── Sidebar ───────────────────────────────────────────────────
 
     def _build_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, fg_color=BG_SIDEBAR, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(4, weight=1)  # session list expands
+        self.sidebar.grid_rowconfigure(4, weight=1)  # spacer expands
         self.sidebar.grid_columnconfigure(0, weight=1)
         
         # ── Logo Section ──
@@ -331,26 +311,38 @@ class RonApp(ctk.CTk):
             height=36, corner_radius=10
         ).grid(row=1, column=0, sticky="ew", padx=20, pady=(16, 4))
         
-        # Divider
-        ctk.CTkFrame(self.sidebar, fg_color=BORDER_DIM, height=1).grid(
-            row=2, column=0, sticky="ew", padx=20, pady=(10, 6))
-        
-        # ── Chat History Label ──
-        ctk.CTkLabel(
-            self.sidebar, text="CHAT HISTORY",
-            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
-            text_color=TEXT_DIM
-        ).grid(row=3, column=0, sticky="w", padx=24, pady=(4, 2))
-        
-        # ── Session List (scrollable) ──
-        self.session_list_frame = ctk.CTkScrollableFrame(
-            self.sidebar, fg_color="transparent",
-            scrollbar_button_color=BORDER_DIM,
-            scrollbar_button_hover_color=TEXT_DIM
+        # ── Voice Chat Button ──
+        self.voice_btn = ctk.CTkButton(
+            self.sidebar, text="🎤  Voice Chat",
+            command=self.toggle_voice_mode,
+            fg_color="#059669", hover_color="#047857",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            height=36, corner_radius=10
         )
-        self.session_list_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 4))
-        # Faster scrolling for session list
-        self._bind_fast_scroll(self.session_list_frame)
+        self.voice_btn.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 4))
+        
+        # Tooltip for voice button when disabled
+        self.voice_tooltip = ctk.CTkLabel(
+            self.sidebar, text="Requires Online Mode",
+            font=ctk.CTkFont(family="Segoe UI", size=11, slant="italic"),
+            text_color=DANGER
+        )
+        
+        # ── Spacer (fills remaining space where session list used to be) ──
+        spacer = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        spacer.grid(row=4, column=0, sticky="nsew")
+        
+        # ── Continuous Listening Switch ──
+        self.continuous_listening_var = ctk.BooleanVar(value=True)
+        self.continuous_listening_switch = ctk.CTkSwitch(
+            self.sidebar, text="Continuous Follow-up",
+            variable=self.continuous_listening_var,
+            onvalue=True, offvalue=False,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color=TEXT_DIM, button_color=ACCENT, button_hover_color=ACCENT_HOVER
+        )
+        self.continuous_listening_switch.grid(row=4, column=0, sticky="w", padx=20, pady=(4, 4))
         
         # ── Bottom Controls ──
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
@@ -404,71 +396,28 @@ class RonApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             height=34, corner_radius=8
         ).pack(fill="x")
-        
-        # Populate session list
-        self._refresh_session_list()
-
-    def _refresh_session_list(self):
-        """Rebuild the session list buttons in the sidebar."""
-        for widget in self.session_list_frame.winfo_children():
-            widget.destroy()
-        
-        for session in self.sessions_index:
-            sid = session["id"]
-            title = session.get("title", "Chat")[:35]
-            ts = session.get("timestamp", "")
-            try:
-                dt = datetime.datetime.fromisoformat(ts)
-                date_str = dt.strftime("%b %d, %H:%M")
-            except Exception:
-                date_str = ""
-            
-            is_active = (sid == self.current_session_id)
-            fg = BG_SIDEBAR_HL if is_active else "transparent"
-            border_c = ACCENT if is_active else BG_SIDEBAR
-            border_w = 1 if is_active else 0
-            
-            row_frame = ctk.CTkFrame(self.session_list_frame, fg_color=fg, corner_radius=8,
-                                      border_color=border_c, border_width=border_w)
-            row_frame.pack(fill="x", pady=2, padx=4)
-            
-            btn = ctk.CTkButton(
-                row_frame, text=f"💬  {title}",
-                command=lambda s=sid: self._load_session(s),
-                fg_color="transparent", hover_color=BG_SIDEBAR_HL,
-                text_color=TEXT_PRIMARY if is_active else TEXT_SECONDARY,
-                font=ctk.CTkFont(family="Segoe UI", size=12),
-                anchor="w", height=32
-            )
-            btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
-            
-            if date_str:
-                ctk.CTkLabel(
-                    row_frame, text=date_str,
-                    font=ctk.CTkFont(family="Segoe UI", size=9),
-                    text_color=TEXT_DIM
-                ).pack(side="right", padx=(0, 8))
-            
-            # Delete button (small X)
-            del_btn = ctk.CTkButton(
-                row_frame, text="✕", width=24, height=24,
-                command=lambda s=sid: self._delete_session(s),
-                fg_color="transparent", hover_color="#7F1D1D",
-                text_color=TEXT_DIM,
-                font=ctk.CTkFont(size=11), corner_radius=4
-            )
-            del_btn.pack(side="right", padx=(0, 2))
 
     def _check_ollama_status(self):
+        import threading
+        threading.Thread(target=self._check_ollama_status_thread, daemon=True).start()
+
+    def _check_ollama_status_thread(self):
         is_online = self.engine.intent_parser.check_ollama_status()
         if is_online:
             model = self.engine.intent_parser.get_best_model_name()
+            self.after(0, lambda: self._update_ollama_ui(True, model))
+        else:
+            self.after(0, lambda: self._update_ollama_ui(False, ""))
+        
+        self.after(15000, self._check_ollama_status)
+
+    def _update_ollama_ui(self, is_online, model):
+        if is_online:
             self.ollama_dot.configure(text_color=SUCCESS)
             self.ollama_label.configure(text=f"Ollama: {model}", text_color=SUCCESS)
         else:
             self.ollama_dot.configure(text_color=DANGER)
             self.ollama_label.configure(text="Ollama: Offline", text_color="#F87171")
-        self.after(15000, self._check_ollama_status)
 
     # ── Chat Panel ────────────────────────────────────────────────
 
@@ -580,6 +529,9 @@ class RonApp(ctk.CTk):
         self.after(0, self._update_status_impl, status)
 
     def _update_status_impl(self, status: str):
+        if hasattr(self, 'voice_manager') and self.voice_manager:
+            self.voice_manager.override_status = status
+            
         if "Await" in status:
             self.status_dot.configure(text_color=WARNING)
             self.status_label.configure(text="Approval", text_color=WARNING)
@@ -593,6 +545,16 @@ class RonApp(ctk.CTk):
             if "Think" in status:
                 self._start_thinking_animation()
         else:
+            if hasattr(self, 'voice_manager') and self.voice_manager:
+                self.voice_manager.override_status = None
+                
+                # If Voice Mode is currently active and Continuous Follow-up is on, wait for follow up
+                if hasattr(self, 'is_voice_mode') and self.is_voice_mode:
+                    if hasattr(self, 'continuous_listening_var') and self.continuous_listening_var.get():
+                        self.voice_manager.wake_up(silent=True)
+                        self.voice_manager.override_status = "Waiting for follow-up command..."
+                        self.after(4000, lambda: setattr(self.voice_manager, 'override_status', None))
+                        
             self.status_dot.configure(text_color=SUCCESS)
             self.status_label.configure(text="Ready", text_color=TEXT_PRIMARY)
             self.input_textbox.configure(state="normal")
@@ -645,6 +607,24 @@ class RonApp(ctk.CTk):
         self.after(1200, lambda: self.status_label.configure(text=old_text, text_color=old_color))
 
     def display_message(self, sender: str, text: str):
+        if hasattr(self, 'is_voice_mode') and self.is_voice_mode:
+            if sender in ["Ron", "Ron Console"] and hasattr(self, 'voice_manager'):
+                
+                def _on_speak_done():
+                    # If Continuous Follow-Up is on, wake him up AFTER he finishes talking!
+                    if self.status_label.cget("text") in ["Ready", "Idle"]:
+                        if hasattr(self, 'continuous_listening_var') and self.continuous_listening_var.get():
+                            self.voice_manager.wake_up(silent=True)
+                            self.voice_manager.override_status = "Waiting for follow-up command..."
+                            self.after(4000, lambda: setattr(self.voice_manager, 'override_status', None))
+                            
+                # Speak the error or response aloud instead of writing it to chat
+                self.voice_manager.speak(text, on_complete=_on_speak_done)
+                
+                # Briefly show it on the Voice UI as well
+                self.voice_manager.override_status = f"Feedback: {text[:40]}..."
+                self.after(3000, lambda: setattr(self.voice_manager, 'override_status', None))
+            return
         self.after(0, self._display_message_impl, sender, text)
 
     def _display_message_impl(self, sender: str, text: str):
@@ -653,6 +633,8 @@ class RonApp(ctk.CTk):
         
         if sender == "Ron":
             self._stop_thinking_animation()
+            if self.is_voice_mode and self.voice_manager:
+                self.voice_manager.speak(text)
         
         is_user = (sender == "You")
         is_console = (sender == "Ron Console")
@@ -700,15 +682,10 @@ class RonApp(ctk.CTk):
         
         self.chat_messages_count += 1
         
-        # Persist to history
+        # Keep in-memory history for Ollama context (never persisted to disk)
         if not self.is_loading_history and sender in ["You", "Ron"]:
             role = "user" if is_user else "assistant"
             self.chat_history.append({"role": role, "content": text})
-            self._save_current_session()
-            
-            # Add session to index on first user message
-            if is_user and self.chat_messages_count == 1:
-                self._ensure_session_in_index(text)
         
         # Auto-scroll
         self.after(30, lambda: self.chat_frame._parent_canvas.yview_moveto(1.0))
@@ -737,6 +714,156 @@ class RonApp(ctk.CTk):
             self.pending_reply_callback(False)
             self.pending_reply_callback = None
 
+    # ── Voice Mode ────────────────────────────────────────────────
+    
+    def toggle_voice_mode(self):
+        self.is_voice_mode = not self.is_voice_mode
+        if self.is_voice_mode:
+            # Hide the main bulky text window
+            self.withdraw()
+            
+            # Create a small floating popup box for Voice Mode
+            self.voice_window = ctk.CTkToplevel(self)
+            self.voice_window.geometry("400x550")
+            self.voice_window.title("Ron Voice Chat")
+            
+            # Use Ron avatar for the voice window icon if possible
+            try:
+                import sys, os
+                icon_ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_avatar.ico")
+                if os.path.exists(icon_ico_path) and sys.platform == "win32":
+                    self.voice_window.iconbitmap(icon_ico_path)
+                elif hasattr(self, 'icon_photo'):
+                    self.voice_window.wm_iconphoto(False, self.icon_photo)
+            except Exception:
+                pass
+
+            self.voice_window.protocol("WM_DELETE_WINDOW", self.toggle_voice_mode)
+            # self.voice_window.attributes("-topmost", True) # Removed so it doesn't hover over newly opened apps
+            # Build the panel inside the new window
+            self._build_voice_panel(self.voice_window)
+        else:
+            # Switch back to text mode
+            if hasattr(self, 'voice_window') and self.voice_window.winfo_exists():
+                self.voice_window.destroy()
+                
+            self.deiconify() # Bring main window back
+            self.state("zoomed")
+            
+            if self.voice_manager:
+                self.voice_manager.stop_listening()
+
+    def _build_voice_panel(self, parent_window):
+        self.voice_panel = ctk.CTkFrame(parent_window, fg_color=BG_DARK, corner_radius=0)
+        self.voice_panel.pack(fill="both", expand=True)
+        
+        # Large Clickable Logo
+        if self.ron_avatar_img:
+            try:
+                import os
+                from PIL import Image, ImageDraw
+                avatar_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_avatar.png")
+                if not os.path.exists(avatar_path):
+                    avatar_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ron_logo.png")
+                    
+                if os.path.exists(avatar_path):
+                    img = Image.open(avatar_path).resize((140, 140), Image.Resampling.LANCZOS)
+                    # Convert to RGBA if not already to support transparency
+                    img = img.convert("RGBA")
+                    mask = Image.new("L", (140, 140), 0)
+                    draw = ImageDraw.Draw(mask)
+                    draw.ellipse((0, 0, 140, 140), fill=255)
+                    img.putalpha(mask)
+                    large_img = ctk.CTkImage(light_image=img, dark_image=img, size=(140, 140))
+                    
+                    logo_btn = ctk.CTkButton(
+                        self.voice_panel, text="", image=large_img, 
+                        fg_color="transparent", hover_color=BG_SIDEBAR_HL, 
+                        width=150, height=150, corner_radius=75,
+                        command=lambda: self.voice_manager.wake_up() if self.voice_manager else None
+                    )
+                    logo_btn.pack(expand=True, pady=(40, 10))
+            except Exception as e:
+                print(f"Error loading large voice avatar: {e}")
+        
+        self.voice_status_label = ctk.CTkLabel(
+            self.voice_panel, text="Initializing...",
+            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
+            text_color=ACCENT
+        )
+        self.voice_status_label.pack(pady=10)
+        
+        ctk.CTkLabel(
+            self.voice_panel, text="Say 'Hey Ron' or click logo to talk",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            text_color=TEXT_DIM
+        ).pack(pady=5)
+        
+        # Microphone Selector
+        mic_names = []
+        try:
+            import soundcard as sc
+            mic_names = [m.name for m in sc.all_microphones()]
+        except Exception:
+            pass
+            
+        if mic_names:
+            def on_mic_change(new_mic):
+                if self.voice_manager:
+                    self.voice_manager.stop_listening()
+                    # Wait for thread to exit before restarting
+                    self.after(500, lambda: self.voice_manager.start_listening(
+                        text_callback=self._on_voice_input,
+                        status_callback=self._on_voice_status,
+                        mic_name=new_mic
+                    ))
+            
+            mic_dropdown = ctk.CTkOptionMenu(
+                self.voice_panel,
+                values=mic_names,
+                command=on_mic_change,
+                fg_color=BG_DARK, button_color=BG_CARD,
+                button_hover_color=BORDER_DIM, text_color=TEXT_DIM
+            )
+            mic_dropdown.pack(pady=10)
+            
+            # Start listening with currently selected dropdown value initially
+            default_mic = mic_names[0]
+            if self.voice_manager:
+                self.voice_manager.start_listening(
+                    text_callback=self._on_voice_input,
+                    status_callback=self._on_voice_status,
+                    mic_name=default_mic
+                )
+        else:
+            if self.voice_manager:
+                self.voice_manager.start_listening(
+                    text_callback=self._on_voice_input,
+                    status_callback=self._on_voice_status
+                )
+        
+        ctk.CTkButton(
+            self.voice_panel, text="🔙 Back to Text",
+            command=self.toggle_voice_mode,
+            fg_color=BG_CARD, hover_color=BORDER_DIM,
+            text_color=TEXT_PRIMARY,
+            height=40
+        ).pack(side="bottom", pady=40, padx=40, fill="x")
+
+    def _on_voice_status(self, status: str, rms_val: float = 0.0):
+        if hasattr(self, "voice_status_label") and self.voice_status_label.winfo_exists():
+            # Create a simple visual volume bar (max 10 blocks to stay compact)
+            vol = min(int(rms_val / 50.0), 10)
+            bar = "█" * vol + "░" * (10 - vol)
+            
+            display_text = f"{status}\n\nMic: [{bar}]"
+            
+            self.after(0, lambda: self.voice_status_label.configure(text=display_text))
+
+    def _on_voice_input(self, text: str):
+        self.after(0, lambda: self.display_message("You", text))
+        self.after(0, lambda: self.engine.process_instruction_async(text, self.chat_history))
+
     # ── User Actions ──────────────────────────────────────────────
 
     def send_user_instruction(self):
@@ -755,11 +882,10 @@ class RonApp(ctk.CTk):
         self.engine.safety_manager.save_settings()
 
     def clear_chat(self):
-        """Legacy method — now redirects to new session."""
+        """Legacy method — redirects to new session."""
         self._new_session(show_welcome=True)
 
     def on_closing(self):
-        self._save_current_session()
         self.engine.set_approval(False)
         self.destroy()
         os._exit(0)

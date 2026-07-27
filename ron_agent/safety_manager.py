@@ -55,6 +55,7 @@ class SafetyManager:
             "read_file": f"Read content from file: '{details}'",
             "close_app": f"Force close application process: '{details}'",
             "open_app": f"Launch the application: '{details}'",
+            "open_camera": "Open the Camera app on this device.",
             "open_folder": f"Open the folder path: '{details}'",
             "open_url": f"Open the website: '{details}'",
             "type_text": f"Type the text: '{details}'",

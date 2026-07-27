@@ -62,111 +62,161 @@ class RonEngine:
         self.set_approval(False)
 
     def _process_instruction_thread(self, text: str, chat_history: List[Dict[str, str]] = None):
-        self.update_status("Thinking...")
-        self.log(f"Received instruction: '{text}'")
-        
-        # Step 1: Parse intent with conversational context
-        parsed = self.intent_parser.parse_instruction(text, chat_history)
-        actions = parsed.get("actions", [])
-        explanation = parsed.get("explanation", "").strip()
-        mode = parsed.get("mode", "Local Rules")
-
-        self.log(f"Parser Mode: {mode}")
-        self.log(f"Explanation: {explanation}")
-        self.log(f"Actions to execute: {actions}")
-
-        if self.is_cancelled:
-            self.update_status("Idle")
-            self.send_chat_message("Ron", "Execution stopped.")
-            return
-
-        # If no automation actions are needed, send direct reply and exit
-        if not actions:
+        try:
+            self.update_status("Thinking...")
+            self.log(f"Received instruction: '{text}'")
+            
+            # Step 1: Parse intent with conversational context
+            parsed = self.intent_parser.parse_instruction(text, chat_history)
+            actions = parsed.get("actions", [])
+            explanation = parsed.get("explanation", "").strip()
+            mode = parsed.get("mode", "Local Rules")
+    
+            self.log(f"Parser Mode: {mode}")
+            self.log(f"Explanation: {explanation}")
+            self.log(f"Actions to execute: {actions}")
+    
+            if self.is_cancelled:
+                self.update_status("Idle")
+                self.send_chat_message("Ron", "Execution stopped.")
+                return
+    
+            # If no automation actions are needed, send direct reply and exit
+            if not actions:
+                if explanation:
+                    self.send_chat_message("Ron", explanation)
+                else:
+                    self.send_chat_message("Ron", "I processed your input, but no automation actions were generated.")
+                self.update_status("Idle")
+                return
+    
+            # If there are actions, send Ron's direct description text immediately (no plan logs or system headers!)
             if explanation:
                 self.send_chat_message("Ron", explanation)
-            else:
-                self.send_chat_message("Ron", "I processed your input, but no automation actions were generated.")
+                time.sleep(0.2)
+    
+            success_count = 0
+            fail_count = 0
+            cancelled = False
+    
+            # Start execution chain
+            self._execute_action_list(actions, is_background=False, success_count=success_count, fail_count=fail_count, explanation=explanation)
+        except Exception as e:
+            self.log(f"Engine crash in process thread: {e}")
+            self.send_chat_message("Ron", f"I encountered an internal error: {e}")
             self.update_status("Idle")
-            return
 
-        # If there are actions, send Ron's direct description text immediately (no plan logs or system headers!)
-        if explanation:
-            self.send_chat_message("Ron", explanation)
-            time.sleep(0.2)
+    def _execute_action_list(self, actions: list, is_background: bool = False, delay_secs: float = 0, success_count: int = 0, fail_count: int = 0, explanation: str = ""):
+        if delay_secs > 0:
+            time.sleep(delay_secs)
 
-        success_count = 0
         cancelled = False
+        
+        try:
+            for i, action in enumerate(actions):
+                if self.is_cancelled:
+                    cancelled = True
+                    break
+                    
+                action_type = action.get("type")
+                details = action.get("details")
 
-        # Step 2: Execute actions sequentially
-        for i, action in enumerate(actions):
-            if self.is_cancelled:
-                cancelled = True
-                break
+                self.log(f"Step {i+1}/{len(actions)}: {action_type} ({details})")
                 
-            action_type = action.get("type")
-            details = action.get("details")
-
-            self.log(f"Step {i+1}/{len(actions)}: {action_type} ({details})")
-            
-            # Check safety approval
-            if self.safety_manager.requires_approval(action_type):
-                self.update_status("Awaiting Safety Approval...")
-                self.log(f"Action requires approval: {action_type}")
-                
-                # Reset approval event
-                self.approval_event.clear()
-                self.approval_result = False
-                
-                # Ask UI to show verification prompt
-                if self.ui_approval_callback:
-                    self.ui_approval_callback(action_type, details, self.set_approval)
-                    self.approval_event.wait()
-                else:
-                    self.log("Safety approval callback not found. Denying by default.")
+                # Check safety approval
+                if self.safety_manager.requires_approval(action_type):
+                    if not is_background:
+                        self.update_status("Awaiting Safety Approval...")
+                    self.log(f"Action requires approval: {action_type}")
+                    
+                    self.approval_event.clear()
                     self.approval_result = False
+                    
+                    if self.ui_approval_callback:
+                        self.ui_approval_callback(action_type, details, self.set_approval)
+                        self.approval_event.wait()
+                    else:
+                        self.log("Safety approval callback not found. Denying by default.")
+                        self.approval_result = False
+
+                    if self.is_cancelled:
+                        cancelled = True
+                        break
+
+                    if not self.approval_result:
+                        self.log("Action rejected by user.")
+                        self.send_chat_message("Ron", f"Cancelled execution because permission was denied.")
+                        cancelled = True
+                        break
+                    else:
+                        self.log("Action approved by user.")
 
                 if self.is_cancelled:
                     cancelled = True
                     break
 
-                if not self.approval_result:
-                    self.log("Action rejected by user.")
-                    self.send_chat_message("Ron", f"Cancelled execution at step {i+1} because permission was denied.")
-                    cancelled = True
-                    break
-                else:
-                    self.log("Action approved by user.")
+                # Intercept 'wait' action for background scheduling
+                if action_type == "wait":
+                    try:
+                        secs = float(details)
+                        remaining = actions[i+1:]
+                        if remaining:
+                            # Spawn daemon thread for remaining actions
+                            threading.Thread(
+                                target=self._execute_action_list,
+                                args=(remaining, True, secs, success_count, fail_count, ""),
+                                daemon=True
+                            ).start()
+                            self.send_chat_message("Ron Console", f"Scheduled remaining actions to run in {secs} seconds in the background.")
+                        else:
+                            time.sleep(secs)
+                        # Break out of this specific loop thread since the rest is scheduled
+                        break
+                    except Exception as e:
+                        self.send_chat_message("Ron", f"Error scheduling wait: {e}")
+                    continue
 
-            if self.is_cancelled:
-                cancelled = True
-                break
-
-            # Execute
-            self.update_status(f"Executing: {action_type}...")
-            result_msg = self._execute_action(action)
-            self.log(result_msg)
-            
-            # Print output directly into the chat for command execution and file reading
-            if action_type in ["run_command", "read_file"]:
-                self.send_chat_message("Ron Console", result_msg)
+                # Execute
+                if not is_background:
+                    self.update_status(f"Executing: {action_type}...")
+                result_msg = self._execute_action(action)
+                self.log(result_msg)
                 
-            success_count += 1
+                # Detect if the action failed
+                is_failure = any(kw in result_msg.lower() for kw in [
+                    "failed to", "error:", "sorry", "couldn't find", "could not find",
+                    "not found", "not currently running", "does not exist"
+                ])
+                
+                # Always show results for command execution and file reading
+                if action_type in ["run_command", "read_file"]:
+                    self.send_chat_message("Ron Console", result_msg)
+                # Show failure messages to the user for ALL action types
+                elif is_failure:
+                    self.send_chat_message("Ron", result_msg)
+                    fail_count += 1
+                
+                if not is_failure:
+                    success_count += 1
+                
+                # Action specific focus sleeps
+                if action_type == "open_app":
+                    time.sleep(1.0)
+                elif action_type == "close_app":
+                    time.sleep(0.8)
+                else:
+                    time.sleep(0.4)
+                    
+        except Exception as e:
+            self.log(f"Execution failed: {e}")
+            self.send_chat_message("Ron", f"Error: {e}")
             
-            # Action specific focus sleeps
-            if action_type == "open_app":
-                time.sleep(1.0)
-            elif action_type == "close_app":
-                time.sleep(0.8)
-            elif action_type == "wait":
-                pass # Already slept during execution
-            else:
-                time.sleep(0.4)
-
-        # Step 3: Complete
-        self.update_status("Idle")
-        if self.is_cancelled or cancelled:
-            self.send_chat_message("Ron", "Execution stopped.")
-            return
+        finally:
+            if not is_background:
+                self.update_status("Idle")
+                self.is_processing = False
+                if not cancelled and success_count > 0 and explanation:
+                    self.send_chat_message("Ron", explanation)
             
         # If rules mode (no pre-existing LLM explanation text was printed), print a brief completion notice
         if not explanation and success_count > 0:
@@ -181,6 +231,8 @@ class RonEngine:
         try:
             if action_type == "open_app":
                 return automation.open_app(details)
+            elif action_type == "open_camera":
+                return automation.open_camera()
             elif action_type == "close_app":
                 return automation.close_app(details)
             elif action_type == "open_url":

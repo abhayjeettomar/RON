@@ -1,16 +1,6 @@
-# Ignore history and logs specifically
-*history*
-*log*
-*chat*
-*.db
-*.sqlite
-
-# Ignore typical python background junk
+gemini_api_key.txt
+ron_config.json
+ron_agent/sessions/
 __pycache__/
 *.pyc
-.venv/
-
-sessions/
-chat_history.json
-
-!*logo.png
+RON.lnk
